@@ -231,11 +231,6 @@ static inline void ac_halt_forever(void) {
     while (1) { asm volatile("hlt"); }
 }
 
-static inline void ac_triple_fault(void) {
-    asm volatile("pushq $0; pushq $0; lidt (%rsp); int3");
-    ac_halt_forever();
-}
-
 static inline void ac_hv_trap_step(struct vmcb *vmcb) {
     struct ac_vcpu_ctx *vcpu = this_cpu_read(host_vcpu); // NOLINT(bugprone-sizeof-expression)
 
@@ -415,11 +410,11 @@ u32 notrace ac_hv_vmexit(struct guest_registers* regs) {
         case VMEXIT_SHUTDOWN:
             sprintf(buf, "[HV-FATAL] shutdown (e1=0x%llx, e2=0x%llx)", vmcb->control.exitinfo1, vmcb->control.exitinfo2);
             ac_debug_serial(buf);
-            ac_triple_fault();
+            ac_halt_forever();
             break;
         case VMEXIT_INVALID:
             ac_debug_serial("[HV-FATAL] invalid vmcb state");
-            ac_triple_fault();
+            ac_halt_forever();
             break;
         default:
             snprintf(buf, sizeof(buf), "[HV-FATAL] unknown exitcode: 0x%llx (info1=%llx, info2=%llx)",
