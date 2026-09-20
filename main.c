@@ -1,7 +1,7 @@
-#define pr_fmt(fmt) KBUILD_MODNAME ": %s: " fmt, __func__
-
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/ptrace.h>
+#include <linux/sched/task.h>
 #include <linux/miscdevice.h>
 #include <linux/xarray.h>
 #include <linux/pid.h>
@@ -65,6 +65,9 @@ struct mm_struct *root_pgd;
 static bool used_to_have_uimp = false;
 DEFINE_PER_CPU(struct ac_vcpu_ctx *, host_vcpu);
 static DEFINE_XARRAY(hooklist);
+
+typedef bool (*ptrace_may_access_t)(struct task_struct *task, unsigned int mode);
+static ptrace_may_access_t real_ptrace_may_access = NULL;
 
 static inline bool ac_exception_has_error_code(u8 vector) {
     static const u32 mask = (1 << X86_TRAP_DF) | (1 << X86_TRAP_TS) |
@@ -216,10 +219,10 @@ static void ac_hv_handle_cpuid(struct guest_registers *regs, struct vmcb *vmcb) 
     }
 
 done:
-    regs->rax = (regs->rax & 0xFFFFFFFF00000000) | eax;
-    regs->rbx = (regs->rbx & 0xFFFFFFFF00000000) | ebx;
-    regs->rcx = (regs->rcx & 0xFFFFFFFF00000000) | ecx;
-    regs->rdx = (regs->rdx & 0xFFFFFFFF00000000) | edx;
+    regs->rax = eax;
+    regs->rbx = ebx;
+    regs->rcx = ecx;
+    regs->rdx = edx;
 
     vmcb->save.rip = vmcb->control.nrip;
 }
@@ -668,9 +671,77 @@ static int ac_hv_pm_notifier(struct notifier_block *nb, unsigned long action, vo
     return NOTIFY_OK;
 }
 
+static bool ac_fallback_dac_check(struct task_struct *task) {
+    const struct cred *my_cred = current_cred();
+    const struct cred *target_cred;
+    bool allowed = false;
+
+    if (capable(CAP_SYS_PTRACE))
+        return true;
+
+    target_cred = get_task_cred(task);
+    if (!target_cred)
+        return false;
+
+    if (uid_eq(my_cred->uid, target_cred->uid) &&
+        uid_eq(my_cred->uid, target_cred->euid) &&
+        uid_eq(my_cred->uid, target_cred->suid) &&
+        gid_eq(my_cred->gid, target_cred->gid) &&
+        gid_eq(my_cred->gid, target_cred->egid) &&
+        gid_eq(my_cred->gid, target_cred->sgid)) {
+        allowed = true;
+    }
+
+    put_cred(target_cred);
+    return allowed;
+}
+
+static bool ac_has_ptrace_permission(struct task_struct *task) {
+    // TODO: this is bad, but i don't know how to fix it right now
+
+    if (likely(real_ptrace_may_access)) {
+        return real_ptrace_may_access(task, PTRACE_MODE_ATTACH_REALCREDS);
+    }
+
+    pr_warn_once("alcor: ptrace_may_access unresolved, falling back to manual DAC check\n");
+    return ac_fallback_dac_check(task);
+}
+
+static int ac_fix_pid(struct ac_hook_data *data) {
+    struct task_struct *task;
+    struct pid *pid;
+
+    if (data->pid == 0) {
+        data->pid = current->tgid;
+    } else {
+        pid = find_get_pid(data->pid);
+        if (!pid) {
+            return -ESRCH;
+        }
+
+        task = get_pid_task(pid, PIDTYPE_PID);
+        if (!task) {
+            put_pid(pid);
+            return -ESRCH;
+        }
+
+        if (!ac_has_ptrace_permission(task->group_leader)) {
+            put_task_struct(task);
+            put_pid(pid);
+            return -EPERM;
+        }
+
+        data->pid = task->tgid;
+        put_task_struct(task);
+        put_pid(pid);
+    }
+
+    return 0;
+}
+
 static long ac_ioctl(struct file *file, unsigned int cmd, unsigned long arg) {
     pid_t target_pid;
-    struct pid *pid;
+    int rc;
     struct ac_hook_data *data_ptr, *old_data, data;
 
     switch (cmd) {
@@ -679,19 +750,8 @@ static long ac_ioctl(struct file *file, unsigned int cmd, unsigned long arg) {
                 return -EFAULT;
             }
 
-            if (target_pid == 0) {
-                target_pid = current->tgid;
-            } else if (capable(CAP_SYS_ADMIN)) {
-                pid = find_get_pid(target_pid);
-                if (!pid) {
-                    return -ESRCH;
-                }
-
-                target_pid = pid_nr(pid);
-
-                put_pid(pid);
-            } else {
-                return -EPERM;
+            if ((rc = ac_fix_pid(&data)) != 0) {
+                return rc;
             }
 
             old_data = xa_erase(&hooklist, target_pid);
@@ -705,19 +765,8 @@ static long ac_ioctl(struct file *file, unsigned int cmd, unsigned long arg) {
                 return -EFAULT;
             }
 
-            if (data.pid == 0) {
-                data.pid = current->tgid;
-            } else if (capable(CAP_SYS_ADMIN)) {
-                pid = find_get_pid(data.pid);
-                if (!pid) {
-                    return -ESRCH;
-                }
-
-                data.pid = pid_nr(pid);
-
-                put_pid(pid);
-            } else {
-                return -EPERM;
+            if ((rc = ac_fix_pid(&data)) != 0) {
+                return rc;
             }
 
             data_ptr = kmalloc(sizeof(*data_ptr), GFP_KERNEL);
