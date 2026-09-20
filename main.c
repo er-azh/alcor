@@ -62,7 +62,7 @@ u32 ac_hv_vmexit(struct guest_registers* regs);
 
 static struct ac_mapping_tables *mapping_tables = NULL;
 struct mm_struct *root_pgd;
-static bool used_to_have_uimp = false;
+static bool used_to_have_umip = false;
 DEFINE_PER_CPU(struct ac_vcpu_ctx *, host_vcpu);
 static DEFINE_XARRAY(hooklist);
 
@@ -385,7 +385,7 @@ u32 notrace ac_hv_vmexit(struct guest_registers* regs) {
                 regs->r15 = vmcb->save.rsp;
                 regs->r14 = vmcb->control.nrip;
 
-                if (used_to_have_uimp) regs->r11 |= X86_CR4_UMIP;
+                if (used_to_have_umip) regs->r11 |= X86_CR4_UMIP;
                 return AC_VMEXIT_DEVIRTUALIZE;
             } else if (vmcb->save.cpl == 0) {
                 pr_info("vmmcall from cpl=0, rax=0x%llx. treating as kvm hypercall.\n", regs->rax);
@@ -818,8 +818,8 @@ static int __init ac_init(void) {
 
     cr4 = native_read_cr4();
     if (cr4 & X86_CR4_UMIP) {
-        pr_info("uimp is enabled. it will be disabled when entering guest mode.\n");
-        used_to_have_uimp = true;
+        pr_info("umip is enabled. it will be disabled when entering guest mode.\n");
+        used_to_have_umip = true;
     }
 
     mapping_tables = ac_npt_build_mapping_tables();
