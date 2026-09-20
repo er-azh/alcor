@@ -71,12 +71,11 @@ void *ac_find_ksym(const char *name) {
 }
 
 
-bool ac_is_svm_supported(void)
-{
+bool ac_is_svm_supported(void) {
     u32 eax, ebx, ecx, edx;
     u64 vmcr;
 
-    cpuid(CPUID_MAX_STANDARD_FN_NUMBER_AND_VENDOR_STRING, &eax, &ebx, &ecx, &edx);
+    ac_cpuid(CPUID_MAX_STANDARD_FN_NUMBER_AND_VENDOR_STRING, 0, &eax, &ebx, &ecx, &edx);
     if (ebx != 0x68747541 || /* "Auth" */
         edx != 0x69746e65 || /* "enti" */
         ecx != 0x444d4163)   /* "cAMD" */
@@ -86,21 +85,21 @@ bool ac_is_svm_supported(void)
     }
 
     // CPUID 0x80000001, ECX Bit 2
-    cpuid(CPUID_PROCESSOR_AND_PROCESSOR_FEATURE_IDENTIFIERS_EX, &eax, &ebx, &ecx, &edx);
+    ac_cpuid(CPUID_PROCESSOR_AND_PROCESSOR_FEATURE_IDENTIFIERS_EX, 0, &eax, &ebx, &ecx, &edx);
     if (!(ecx & CPUID_FN8000_0001_ECX_SVM)) {
         pr_err("svm is not supported or enabled.\n");
         return false;
     }
 
     // CPUID 0x8000000A, EDX Bit 0
-    cpuid(CPUID_SVM_FEATURES, &eax, &ebx, &ecx, &edx);
+    ac_cpuid(CPUID_SVM_FEATURES, 0, &eax, &ebx, &ecx, &edx);
     if (!(edx & CPUID_FN8000_000A_EDX_NP)) {
         pr_err("nested paging (NPT) is not supported.\n");
         return false;
     }
 
     // MSR 0xC0010114,
-    rdmsrl(MSR_VM_CR, vmcr);
+    rdmsrq(MSR_VM_CR, vmcr);
     if (vmcr & SVM_VM_CR_SVM_DIS_MASK) {
         if (vmcr & SVM_VM_CR_SVM_LOCK_MASK) {
             pr_err("svm is disabled and locked.\n");
@@ -108,9 +107,9 @@ bool ac_is_svm_supported(void)
         } else {
             pr_err("svm is disabled but unlocked. attempting to enable...\n");
 
-            wrmsrl(MSR_VM_CR, vmcr & ~SVM_VM_CR_SVM_DIS_MASK);
+            wrmsrq(MSR_VM_CR, vmcr & ~SVM_VM_CR_SVM_DIS_MASK);
 
-            rdmsrl(MSR_VM_CR, vmcr);
+            rdmsrq(MSR_VM_CR, vmcr);
             if (vmcr & SVM_VM_CR_SVM_DIS_MASK) {
                 pr_err("failed to enable svm.\n");
                 return false;

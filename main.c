@@ -154,9 +154,9 @@ static void ac_hv_handle_msr(struct guest_registers *regs, struct vmcb *vmcb) {
             pr_warn("msr access but wasn't requested msr=0x%x, is_write=%d, val=%llx", msr, is_write, value.quad);
         }
         if (is_write) {
-            wrmsrl(msr, value.quad);
+            wrmsrq(msr, value.quad);
         } else {
-            rdmsrl(msr, value.quad);
+            rdmsrq(msr, value.quad);
             regs->rax = value.low;
             regs->rdx = value.high;
         }
@@ -509,7 +509,7 @@ static void ac_devirtualize_core(void *info) {
     pr_err("core %d: requesting devirtualization.\n", cpu);
     ac_hv_devirtualize();
     pr_err("core %d: received control back in root mode.\n", cpu);
-    wrmsrl(MSR_VM_HSAVE_PA, vcpu->shadow_hsave_pa);
+    wrmsrq(MSR_VM_HSAVE_PA, vcpu->shadow_hsave_pa);
     return;
 }
 
@@ -529,8 +529,8 @@ static void ac_hijack_core(void *info) {
         return;
     }
 
-    rdmsrl(MSR_EFER, tmpmsr);
-    wrmsrl(MSR_EFER, tmpmsr | EFER_SVME);
+    rdmsrq(MSR_EFER, tmpmsr);
+    wrmsrq(MSR_EFER, tmpmsr | EFER_SVME);
 
     vmcb = vcpu->guest_vmcb;
 
@@ -591,30 +591,30 @@ static void ac_hijack_core(void *info) {
     ac_copy_segment(gdt, ss, &vcpu->guest_vmcb->save.ss);
 
     // MSRs
-    rdmsrl(MSR_EFER, tmpmsr);
+    rdmsrq(MSR_EFER, tmpmsr);
     vcpu->guest_vmcb->save.efer = tmpmsr;
 
-    rdmsrl(MSR_IA32_CR_PAT, tmpmsr);
+    rdmsrq(MSR_IA32_CR_PAT, tmpmsr);
     vcpu->guest_vmcb->save.g_pat = tmpmsr;
 
     ac_vmsave(vcpu->guest_vmcb);
 
-    rdmsrl(MSR_KERNEL_GS_BASE, tmpmsr);
+    rdmsrq(MSR_KERNEL_GS_BASE, tmpmsr);
     vcpu->guest_vmcb->save.kernel_gs_base = tmpmsr;
 
-    rdmsrl(MSR_FS_BASE, tmpmsr);
+    rdmsrq(MSR_FS_BASE, tmpmsr);
     vcpu->guest_vmcb->save.fs.base = tmpmsr;
 
-    rdmsrl(MSR_GS_BASE, tmpmsr);
+    rdmsrq(MSR_GS_BASE, tmpmsr);
     vcpu->guest_vmcb->save.gs.base = tmpmsr;
 
-    rdmsrl(MSR_STAR, tmpmsr);
+    rdmsrq(MSR_STAR, tmpmsr);
     vcpu->guest_vmcb->save.star = tmpmsr;
-    rdmsrl(MSR_LSTAR, tmpmsr);
+    rdmsrq(MSR_LSTAR, tmpmsr);
     vcpu->guest_vmcb->save.lstar = tmpmsr;
-    rdmsrl(MSR_CSTAR, tmpmsr);
+    rdmsrq(MSR_CSTAR, tmpmsr);
     vcpu->guest_vmcb->save.cstar = tmpmsr;
-    rdmsrl(MSR_SYSCALL_MASK, tmpmsr);
+    rdmsrq(MSR_SYSCALL_MASK, tmpmsr);
     vcpu->guest_vmcb->save.sfmask = tmpmsr;
 
     // CRs
@@ -636,10 +636,10 @@ static void ac_hijack_core(void *info) {
     vcpu->stack_layout.top.vmcb_rsp_ptr = &vcpu->guest_vmcb->save.rsp;
     vcpu->stack_layout.top.guest_vmcb = vcpu->guest_vmcb;
 
-    rdmsrl(MSR_VM_HSAVE_PA, tmpmsr);
+    rdmsrq(MSR_VM_HSAVE_PA, tmpmsr);
     vcpu->shadow_hsave_pa = tmpmsr;
 
-    wrmsrl(MSR_VM_HSAVE_PA, __pa(vcpu->host_state_area));
+    wrmsrq(MSR_VM_HSAVE_PA, __pa(vcpu->host_state_area));
 
     ac_vmsave(vcpu->host_vmcb);
     if (!root_pgd) panic("ac_hijack_core(%d): called but init_mm is not initialized.\n", cpu);
