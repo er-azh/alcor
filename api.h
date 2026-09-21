@@ -2,6 +2,10 @@
 #define _AC_API_H
 #include <linux/types.h>
 
+#ifndef __KERNEL__
+#include <stdbool.h>
+#endif
+
 #define AC_MAX_CPUID_OVERRIDES 16
 
 enum ac_segment_hook {
@@ -38,17 +42,17 @@ struct ac_desc_ptr {
 } __attribute__((packed)) ;
 
 struct ac_cpuid_entry {
-    u32 leaf;
-    u32 subleaf;
-    u8 flags;
-    u32 regs[AC_CPUID_REGISTER_LAST];
+    __u32 leaf;
+    __u32 subleaf;
+    __u8 flags;
+    __u32 regs[AC_CPUID_REGISTER_LAST];
 };
 
 struct ac_hook_data {
     pid_t pid;
     bool log_cpuid;
-    u32 cpuid_count;
-    u32 segment_flags;
+    __u32 cpuid_count;
+    __u32 segment_flags;
     struct ac_cpuid_entry cpuid_overrides[AC_MAX_CPUID_OVERRIDES];
     struct ac_desc_ptr segments_overrides[AC_SEGMENT_LAST];
 };

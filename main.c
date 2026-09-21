@@ -13,6 +13,7 @@
 #include <asm/trapnr.h>
 #include <asm/msr-index.h>
 
+#include "linux/capability.h"
 #include "mem.h"
 #include "svm.h"
 #include "npt.h"
@@ -666,42 +667,6 @@ static int ac_hv_pm_notifier(struct notifier_block *nb, unsigned long action, vo
     return NOTIFY_OK;
 }
 
-static bool ac_fallback_dac_check(struct task_struct *task) {
-    const struct cred *my_cred = current_cred();
-    const struct cred *target_cred;
-    bool allowed = false;
-
-    if (capable(CAP_SYS_PTRACE))
-        return true;
-
-    target_cred = get_task_cred(task);
-    if (!target_cred)
-        return false;
-
-    if (uid_eq(my_cred->uid, target_cred->uid) &&
-        uid_eq(my_cred->uid, target_cred->euid) &&
-        uid_eq(my_cred->uid, target_cred->suid) &&
-        gid_eq(my_cred->gid, target_cred->gid) &&
-        gid_eq(my_cred->gid, target_cred->egid) &&
-        gid_eq(my_cred->gid, target_cred->sgid)) {
-        allowed = true;
-    }
-
-    put_cred(target_cred);
-    return allowed;
-}
-
-static bool ac_has_ptrace_permission(struct task_struct *task) {
-    // TODO: this is bad, but i don't know how to fix it right now
-
-    if (likely(real_ptrace_may_access)) {
-        return real_ptrace_may_access(task, PTRACE_MODE_ATTACH_REALCREDS);
-    }
-
-    pr_warn_once("alcor: ptrace_may_access unresolved, falling back to manual DAC check\n");
-    return ac_fallback_dac_check(task);
-}
-
 static int ac_fix_pid(struct ac_hook_data *data) {
     struct task_struct *task;
     struct pid *pid;
@@ -720,7 +685,7 @@ static int ac_fix_pid(struct ac_hook_data *data) {
             return -ESRCH;
         }
 
-        if (!ac_has_ptrace_permission(task->group_leader)) {
+        if (!capable(CAP_SYS_PTRACE)) {
             put_task_struct(task);
             put_pid(pid);
             return -EPERM;
@@ -745,11 +710,14 @@ static long ac_ioctl(struct file *file, unsigned int cmd, unsigned long arg) {
                 return -EFAULT;
             }
 
+            memset(&data, 0, sizeof(data));
+            data.pid = target_pid;
+
             if ((rc = ac_fix_pid(&data)) != 0) {
                 return rc;
             }
 
-            old_data = xa_erase(&hooklist, target_pid);
+            old_data = xa_erase(&hooklist, data.pid);
             if (!old_data) return -ENOENT;
 
             kfree(old_data);
